@@ -2,6 +2,18 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title="Analyse des données", layout="wide")
+
+# Mettre logo et titre
+st.columns()
+col_logo, col_title = st.columns([1, 4])
+
+with col_logo:
+    st.image("assets/Logo_ISoSL_256px.png", width=120)
+
+with col_title:
+    st.title("Dashboard RPM")
+    st.markdown("Analyse d'activité hospitalière et indicateurs de pilotage")
+
 st.title("Analyse des données")
 
 #1 Initialiser la mémoire de la session
