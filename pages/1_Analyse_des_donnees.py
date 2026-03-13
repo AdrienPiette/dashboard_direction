@@ -4,25 +4,21 @@ import pandas as pd
 st.set_page_config(page_title="Analyse des données", layout="wide")
 
 # Mettre logo et titre
-st.columns()
-col_logo, col_title = st.columns([1, 4])
 
-with col_logo:
-    st.image("assets/Logo_ISoSL_256px.png", width=120)
+st.image("assets/Logo_ISoSL_256px.png", width=140)
 
-with col_title:
-    st.title("Dashboard RPM")
-    st.markdown("Analyse d'activité hospitalière et indicateurs de pilotage")
-
-st.title("Analyse des données")
 
 #1 Initialiser la mémoire de la session
+
 if "df" not in st.session_state:
     st.session_state["df"] = None
+
 #2 Widget d'upload
+
 uploaded_file = st.file_uploader("Charge un fichier CSV ou Excel", type=["csv","xlsx"])
 
 #3 Lire le fichier si l'utilisateur en a chargé un
+
 if uploaded_file is not None:
     file_name = uploaded_file.name.lower()  # normaliser le nom du fichier pour éviter les problèmes de nom
 
@@ -39,11 +35,13 @@ if uploaded_file is not None:
             st.success("Fichier chargé avec succès !")
     except Exception as e:
         st.error(f"Erreur lors du chargement : {e}")
+
 #4 Récuperer  le DataFrame depuis la session
 
 df = st.session_state["df"]
 
 #5 Affichage si dataset existe
+
 if df is not None:
 
     st.subheader("Aperçu du dataset")
