@@ -1,0 +1,7 @@
+services:
+  hospital-data-lab:
+    build: .
+    container_name: hospital-data-lab
+    ports:
+      - "8501:8501"
+    restart: unless-stopped

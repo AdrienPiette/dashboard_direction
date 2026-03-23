@@ -17,6 +17,8 @@ SESSION_DEFAULTS = {
     "prepared_df": None,
     "data_source_name": None,
     "prep_report": None,
+    "rpm_parsed_df": None,
+    "rpm_source_name": None,
 }
 LOGO_FILE = Path(__file__).resolve().parents[1] / "assets" / "Logo_ISoSL_256px.png"
 

@@ -15,7 +15,7 @@ inject_base_css()
 
 render_page_header(
     "Hospital Data Lab",
-    "Unified data ingestion, preparation, exploration and clustering for hospital activity datasets.",
+    "Unified data ingestion, RPM parsing, preparation, exploration and clustering for hospital activity datasets.",
 )
 
 hero_left, hero_right = st.columns([1.25, 1], gap="large")
@@ -25,6 +25,7 @@ with hero_left:
         """
         This Streamlit app is designed for hospital analysts who need one place to:
 
+        - parse Belgian RPM ASCII/ANSI text exports into tabular datasets
         - import Excel or CSV files from operational sources
         - standardize and normalize datasets before analysis
         - explore data quality, distributions and activity drivers
@@ -34,7 +35,7 @@ with hero_left:
     )
 
     st.info(
-        "Start on the `Data Preparation` page to load a file, clean it and store the prepared dataset in session."
+        "Start on the `RPM Import` page for government text files, or on `Data Preparation` for CSV and Excel sources."
     )
 
 with hero_right:
