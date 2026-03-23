@@ -29,7 +29,10 @@ top_metrics[0].metric("Rows", summary["rows"])
 top_metrics[1].metric("Columns", summary["columns"])
 top_metrics[2].metric("Missing values", summary["missing_values"])
 top_metrics[3].metric("Numeric KPIs", len(numeric_columns))
-top_metrics[4].metric("Categorical dimensions", len(categorical_columns))
+top_metrics[4].metric("Identifiers", len(summary["identifier_columns"]))
+
+if summary["identifier_columns"]:
+    st.caption(f"Excluded identifier columns: `{', '.join(summary['identifier_columns'])}`")
 
 filters_col, dashboard_col = st.columns([0.9, 1.4], gap="large")
 

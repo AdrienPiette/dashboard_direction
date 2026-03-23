@@ -19,8 +19,10 @@ SESSION_DEFAULTS = {
     "prep_report": None,
     "rpm_parsed_df": None,
     "rpm_source_name": None,
+    "column_role_overrides": {},
 }
 LOGO_FILE = Path(__file__).resolve().parents[1] / "assets" / "Logo_ISoSL_256px.png"
+ROLE_OPTIONS = ["auto", "identifier", "categorical", "numeric", "datetime", "text"]
 
 
 def init_session_state() -> None:
@@ -220,6 +222,52 @@ def _snake_case(value: str) -> str:
     return normalized.strip("_") or "column"
 
 
+def is_identifier_column(df: pd.DataFrame, column: str) -> bool:
+    normalized_name = _snake_case(column)
+    identifier_tokens = {"id", "identifier", "identifiant", "numero_id", "num_id", "patient_id", "record_id"}
+
+    if normalized_name in identifier_tokens:
+        return True
+    if normalized_name.endswith("_id") or normalized_name.startswith("id_") or "numero" in normalized_name and "id" in normalized_name:
+        return True
+
+    series = df[column].dropna()
+    if series.empty:
+        return False
+
+    string_series = series.astype(str).str.strip()
+    unique_ratio = string_series.nunique(dropna=True) / max(len(string_series), 1)
+    has_leading_zero = string_series.str.match(r"^0\d+$").any()
+    fixed_length_like = string_series.str.len().nunique() <= 2 and string_series.str.len().median() >= 6
+    numeric_like_ratio = pd.to_numeric(string_series.str.replace(" ", "", regex=False).str.replace(",", ".", regex=False), errors="coerce").notna().mean()
+
+    return numeric_like_ratio >= 0.9 and (unique_ratio >= 0.9 or has_leading_zero or fixed_length_like)
+
+
+def get_column_roles(df: pd.DataFrame, overrides: dict[str, str] | None = None) -> dict[str, str]:
+    overrides = overrides or {}
+    roles: dict[str, str] = {}
+
+    for column in df.columns:
+        override = overrides.get(column, "auto")
+        if override != "auto":
+            roles[column] = override
+            continue
+
+        if is_identifier_column(df, column):
+            roles[column] = "identifier"
+        elif pd.api.types.is_datetime64_any_dtype(df[column]):
+            roles[column] = "datetime"
+        elif pd.api.types.is_numeric_dtype(df[column]):
+            roles[column] = "numeric"
+        elif pd.api.types.is_bool_dtype(df[column]) or pd.api.types.is_categorical_dtype(df[column]):
+            roles[column] = "categorical"
+        else:
+            roles[column] = "text"
+
+    return roles
+
+
 def standardize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     renamed = []
     used = {}
@@ -263,10 +311,37 @@ def auto_parse_datetime_columns(df: pd.DataFrame, threshold: float = 0.75) -> tu
 
 
 def coerce_numeric_columns(df: pd.DataFrame, min_success_ratio: float = 0.8) -> tuple[pd.DataFrame, list[str]]:
+    return coerce_numeric_columns_with_overrides(df, overrides=None, min_success_ratio=min_success_ratio)
+
+
+def coerce_numeric_columns_with_overrides(
+    df: pd.DataFrame,
+    overrides: dict[str, str] | None = None,
+    min_success_ratio: float = 0.8,
+) -> tuple[pd.DataFrame, list[str]]:
     copy_df = df.copy()
     converted_columns = []
+    overrides = overrides or {}
 
     for column in copy_df.select_dtypes(include=["object", "string"]).columns:
+        forced_role = overrides.get(column, "auto")
+
+        if forced_role in {"identifier", "categorical", "text"}:
+            copy_df[column] = copy_df[column].astype("string")
+            continue
+        if forced_role == "datetime":
+            parsed_dates = pd.to_datetime(copy_df[column], errors="coerce", dayfirst=True)
+            copy_df[column] = parsed_dates
+            continue
+        if forced_role == "numeric":
+            cleaned = copy_df[column].astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
+            copy_df[column] = pd.to_numeric(cleaned, errors="coerce")
+            converted_columns.append(column)
+            continue
+        if is_identifier_column(copy_df, column):
+            copy_df[column] = copy_df[column].astype("string")
+            continue
+
         cleaned = copy_df[column].astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
         parsed = pd.to_numeric(cleaned, errors="coerce")
 
@@ -307,8 +382,19 @@ def handle_missing_values(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
 
 
 def normalize_numeric_features(df: pd.DataFrame, method: str) -> tuple[pd.DataFrame, list[str]]:
+    return normalize_numeric_features_with_overrides(df, method, overrides=None)
+
+
+def normalize_numeric_features_with_overrides(
+    df: pd.DataFrame,
+    method: str,
+    overrides: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame, list[str]]:
     copy_df = df.copy()
-    numeric_columns = list(copy_df.select_dtypes(include=["number"]).columns)
+    identifier_columns = {
+        column for column, role in get_column_roles(copy_df, overrides=overrides).items() if role == "identifier"
+    }
+    numeric_columns = [column for column in copy_df.select_dtypes(include=["number"]).columns if column not in identifier_columns]
 
     if method == "None" or not numeric_columns:
         return copy_df, numeric_columns
@@ -328,8 +414,10 @@ def prepare_dataset(
     drop_duplicates: bool,
     missing_strategy: str,
     normalization: str,
+    column_role_overrides: dict[str, str] | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     prepared = df.copy()
+    column_role_overrides = column_role_overrides or {}
     report = {
         "initial_shape": df.shape,
         "renamed_columns": clean_columns,
@@ -340,10 +428,14 @@ def prepare_dataset(
         "missing_strategy": missing_strategy,
         "normalization": normalization,
         "normalized_columns": [],
+        "column_role_overrides": {k: v for k, v in column_role_overrides.items() if v != "auto"},
     }
 
     if clean_columns:
         prepared = standardize_column_names(prepared)
+        column_role_overrides = {
+            _snake_case(column): role for column, role in column_role_overrides.items() if role in ROLE_OPTIONS
+        }
 
     if trim_text:
         prepared = trim_string_columns(prepared)
@@ -353,8 +445,23 @@ def prepare_dataset(
         report["parsed_dates"] = parsed_dates
 
     if convert_numeric:
-        prepared, numeric_converted = coerce_numeric_columns(prepared)
+        prepared, numeric_converted = coerce_numeric_columns_with_overrides(
+            prepared,
+            overrides=column_role_overrides,
+        )
         report["converted_numeric"] = numeric_converted
+
+    roles = get_column_roles(prepared, overrides=column_role_overrides)
+    for column, role in roles.items():
+        if role == "identifier":
+            prepared[column] = prepared[column].astype("string")
+        elif role in {"categorical", "text"}:
+            prepared[column] = prepared[column].astype("string")
+        elif role == "datetime":
+            prepared[column] = pd.to_datetime(prepared[column], errors="coerce", dayfirst=True)
+        elif role == "numeric" and not pd.api.types.is_numeric_dtype(prepared[column]):
+            cleaned = prepared[column].astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
+            prepared[column] = pd.to_numeric(cleaned, errors="coerce")
 
     if drop_duplicates:
         before = len(prepared)
@@ -362,19 +469,26 @@ def prepare_dataset(
         report["duplicates_removed"] = before - len(prepared)
 
     prepared = handle_missing_values(prepared, missing_strategy)
-    prepared, normalized_columns = normalize_numeric_features(prepared, normalization)
+    prepared, normalized_columns = normalize_numeric_features_with_overrides(
+        prepared,
+        normalization,
+        overrides=column_role_overrides,
+    )
     report["normalized_columns"] = normalized_columns if normalization != "None" else []
+    report["column_roles"] = get_column_roles(prepared, overrides=column_role_overrides)
     report["final_shape"] = prepared.shape
 
     return prepared, report
 
 
-def build_profile(df: pd.DataFrame) -> pd.DataFrame:
+def build_profile(df: pd.DataFrame, overrides: dict[str, str] | None = None) -> pd.DataFrame:
     total_rows = max(len(df), 1)
+    roles = get_column_roles(df, overrides=overrides)
     return pd.DataFrame(
         {
             "column": df.columns,
             "dtype": df.dtypes.astype(str).values,
+            "role": [roles[column] for column in df.columns],
             "missing_values": df.isna().sum().values,
             "missing_pct": (df.isna().sum().values / total_rows * 100).round(2),
             "unique_values": df.nunique(dropna=True).values,
@@ -382,13 +496,23 @@ def build_profile(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def dataset_summary(df: pd.DataFrame) -> dict:
-    numeric_columns = list(df.select_dtypes(include=["number"]).columns)
-    datetime_columns = list(df.select_dtypes(include=["datetime", "datetimetz"]).columns)
+def get_identifier_columns(df: pd.DataFrame, overrides: dict[str, str] | None = None) -> list[str]:
+    return [column for column, role in get_column_roles(df, overrides=overrides).items() if role == "identifier"]
+
+
+def dataset_summary(df: pd.DataFrame, overrides: dict[str, str] | None = None) -> dict:
+    roles = get_column_roles(df, overrides=overrides)
+    identifier_columns = [column for column, role in roles.items() if role == "identifier"]
+    numeric_columns = [
+        column for column, role in roles.items() if role == "numeric" and pd.api.types.is_numeric_dtype(df[column])
+    ]
+    datetime_columns = [
+        column for column, role in roles.items() if role == "datetime" and pd.api.types.is_datetime64_any_dtype(df[column])
+    ]
     categorical_columns = [
         column
-        for column in df.columns
-        if column not in numeric_columns and column not in datetime_columns
+        for column, role in roles.items()
+        if role in {"categorical", "text"}
     ]
     return {
         "rows": int(df.shape[0]),
@@ -397,5 +521,7 @@ def dataset_summary(df: pd.DataFrame) -> dict:
         "duplicate_rows": int(df.duplicated().sum()),
         "numeric_columns": numeric_columns,
         "datetime_columns": datetime_columns,
+        "identifier_columns": identifier_columns,
         "categorical_columns": categorical_columns,
+        "column_roles": roles,
     }

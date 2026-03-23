@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from utils.data_loader import (
+    ROLE_OPTIONS,
     build_profile,
     dataset_summary,
     get_sample_files,
@@ -13,6 +14,7 @@ from utils.data_loader import (
     load_uploaded_file,
     prepare_dataset,
     render_page_header,
+    standardize_column_names,
 )
 
 
@@ -72,6 +74,42 @@ if raw_df is None:
     st.info("Load a dataset to unlock profiling, transformation and downstream modeling.")
     st.stop()
 
+st.markdown("### 3. Column roles")
+st.caption("Override automatic typing when a column should be treated as an identifier, categorical field, numeric measure, date, or plain text.")
+
+role_source_df = raw_df.copy()
+if clean_columns:
+    role_source_df = standardize_column_names(role_source_df)
+
+default_roles = dataset_summary(role_source_df)["column_roles"]
+role_editor_df = pd.DataFrame(
+    {
+        "column": list(role_source_df.columns),
+        "detected_role": [default_roles[column] for column in role_source_df.columns],
+        "selected_role": [
+            st.session_state["column_role_overrides"].get(column, "auto") for column in role_source_df.columns
+        ],
+    }
+)
+
+edited_roles = st.data_editor(
+    role_editor_df,
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "column": st.column_config.TextColumn("Column", disabled=True),
+        "detected_role": st.column_config.TextColumn("Detected", disabled=True),
+        "selected_role": st.column_config.SelectboxColumn("Override", options=ROLE_OPTIONS, required=True),
+    },
+)
+
+column_role_overrides = {
+    row["column"]: row["selected_role"]
+    for _, row in edited_roles.iterrows()
+    if row["selected_role"] != "auto"
+}
+st.session_state["column_role_overrides"] = column_role_overrides
+
 prepared_df, prep_report = prepare_dataset(
     raw_df,
     clean_columns=clean_columns,
@@ -81,13 +119,14 @@ prepared_df, prep_report = prepare_dataset(
     drop_duplicates=drop_duplicates,
     missing_strategy=missing_strategy,
     normalization=normalization,
+    column_role_overrides=column_role_overrides,
 )
 
 st.session_state["prepared_df"] = prepared_df
 st.session_state["prep_report"] = prep_report
 
 raw_summary = dataset_summary(raw_df)
-prepared_summary = dataset_summary(prepared_df)
+prepared_summary = dataset_summary(prepared_df, overrides=column_role_overrides)
 
 st.success(f"`{st.session_state['data_source_name']}` loaded successfully. Prepared dataset is now available in session.")
 
@@ -97,6 +136,11 @@ metric_cols[1].metric("Columns", prepared_summary["columns"])
 metric_cols[2].metric("Missing values", prepared_summary["missing_values"])
 metric_cols[3].metric("Duplicate rows", prepared_summary["duplicate_rows"])
 metric_cols[4].metric("Numeric features", len(prepared_summary["numeric_columns"]))
+
+if prepared_summary["identifier_columns"]:
+    st.info(
+        f"Identifier columns excluded from numeric analysis: `{', '.join(prepared_summary['identifier_columns'])}`"
+    )
 
 st.markdown("### Preparation log")
 log_cols = st.columns(4)
@@ -126,7 +170,7 @@ with preview_tab:
         st.dataframe(prepared_df.head(20), use_container_width=True)
 
 with profile_tab:
-    st.dataframe(build_profile(prepared_df), use_container_width=True)
+    st.dataframe(build_profile(prepared_df, overrides=column_role_overrides), use_container_width=True)
 
 with analysis_tab:
     numeric_columns = prepared_summary["numeric_columns"]
